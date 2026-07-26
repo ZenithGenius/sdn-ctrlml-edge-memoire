@@ -36,8 +36,14 @@ def run(
     epoch: int = config.RECLUSTER_EVERY,
     alpha: float = config.EMA_ALPHA,
     seed: int = config.RANDOM_SEED,
+    trace: list | None = None,
 ) -> dict:
-    """Exécute une simulation et renvoie les métriques agrégées."""
+    """Exécute une simulation et renvoie les métriques agrégées.
+
+    `trace` : si une liste est fournie, l'état interne de chaque époque y est ajouté
+    (charge brute, vecteurs lissés par EMA, clusters, silhouette). Sert à la démo
+    interactive pour montrer le pipeline en fonctionnement ; sans effet sinon.
+    """
     infra = build_infrastructure(topo, n_controllers, seed)
     controllers = infra.controllers
     mu = infra.capacity
@@ -125,6 +131,22 @@ def run(
             ctx.cluster = result
             if not math.isnan(result.silhouette):
                 last_silhouette = result.silhouette
+
+        if trace is not None:
+            cl = ctx.cluster
+            trace.append({
+                "epoch": e,
+                "raw_cpu": {c: snap[c]["cpu"] for c in controllers},
+                "share": {c: snap[c]["nflows"] for c in controllers},  # part des flux reçue
+                "ema_cpu": ({c: float(vectors[i][config.METRICS.index("cpu")])
+                             for i, c in enumerate(controllers)}
+                            if len(history) >= 2 else None),
+                "labels": (dict(zip(controllers, cl.labels.tolist())) if cl else None),
+                "overloaded": (sorted(cl.overloaded) if cl else []),
+                "underutilized": (sorted(cl.underutilized) if cl else []),
+                "load_score": (dict(cl.load_score) if cl else None),
+                "silhouette": (cl.silhouette if cl else float("nan")),
+            })
 
     mean_load = [float(np.mean(load_time_avg[c])) for c in controllers]
     return {

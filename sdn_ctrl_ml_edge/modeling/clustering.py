@@ -34,10 +34,19 @@ def classify(
     k: int = config.N_CLUSTERS,
     metrics: list[str] = config.METRICS,
     seed: int = config.RANDOM_SEED,
+    overload_cpu: float = config.OVERLOAD_CPU,
 ) -> ClusterResult:
-    """Classe les vecteurs de charge (EMA) en k profils via K-means++."""
+    """Classe les vecteurs de charge (EMA) en k profils via K-means++.
+
+    `overload_cpu` : seuil au-dessus duquel le cluster le plus chargé est déclaré
+    surchargé. Par défaut `config.OVERLOAD_CPU` (charge CPU absolue, cas du
+    simulateur) ; l'émulation passe un seuil exprimé sur son échelle relative.
+    """
     n = len(vectors)
-    k = max(1, min(k, n))
+    # Pas plus de clusters que de points DISTINCTS : sinon K-means ne converge pas
+    # vers k groupes (contrôleurs strictement identiques, ex. tous à charge nulle).
+    n_distinct = len(np.unique(np.asarray(vectors, dtype=float), axis=0))
+    k = max(1, min(k, n_distinct))
 
     scaler = StandardScaler()
     x = scaler.fit_transform(vectors)
@@ -60,7 +69,7 @@ def classify(
     # charge (le max relatif existe toujours).
     cpu_idx = metrics.index("cpu")
     hi_cpu = float(vectors[labels == hi, cpu_idx].mean())
-    overloaded = {hi} if hi_cpu >= config.OVERLOAD_CPU else set()
+    overloaded = {hi} if hi_cpu >= overload_cpu else set()
 
     sil = float("nan")
     if 1 < k < n and len(set(labels)) > 1:

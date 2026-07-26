@@ -1,4 +1,4 @@
-.PHONY: help venv requirements test simulate evaluate experiment analyze mlflow-ui clean
+.PHONY: help venv requirements test simulate evaluate experiment analyze flowviz emulate mlflow-ui clean
 
 PY := .venv/bin/python
 PIP := .venv/bin/pip
@@ -11,6 +11,8 @@ help:
 	@echo "evaluate     - balayage déterministe rapide + figures (reports/figures/)"
 	@echo "experiment   - plan d'expériences ~1000 runs (multi-seeds) + MLflow (SEEDS=25)"
 	@echo "analyze      - analyse statistique (IC95 + Wilcoxon) + figures + rapport"
+	@echo "flowviz      - génère reports/flux_sdn.html (flux en direct, à ouvrir au navigateur)"
+	@echo "emulate      - PoC réel sur OVS/OpenFlow (Containernet+Ryu ; Docker requis)"
 	@echo "mlflow-ui    - ouvre l'UI MLflow sur http://127.0.0.1:5000"
 	@echo "clean        - supprime caches et artefacts"
 
@@ -37,6 +39,15 @@ experiment:
 
 analyze:
 	$(PY) -m sdn_ctrl_ml_edge.analysis
+
+RATE ?= 16000
+flowviz:
+	$(PY) -m sdn_ctrl_ml_edge.flowviz --rate $(RATE)
+	@echo "Ouvrez reports/flux_sdn.html dans un navigateur."
+
+ARGS ?=
+emulate:
+	sdn_ctrl_ml_edge/emulation/run.sh $(ARGS)
 
 mlflow-ui:
 	.venv/bin/mlflow ui --backend-store-uri sqlite:///mlflow.db
