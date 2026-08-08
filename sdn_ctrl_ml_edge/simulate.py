@@ -138,6 +138,14 @@ def run(
                 "epoch": e,
                 "raw_cpu": {c: snap[c]["cpu"] for c in controllers},
                 "share": {c: snap[c]["nflows"] for c in controllers},  # part des flux reçue
+                # Les SIX métriques d'entrée, brutes puis lissées : ce sont elles que
+                # consomment l'EMA et le K-means++. Sans cela, seule la charge CPU
+                # était observable, alors que le multi-métriques est la contribution.
+                "raw": {c: dict(snap[c]) for c in controllers},
+                "ema": ({c: {m: float(vectors[i][config.METRICS.index(m)])
+                             for m in config.METRICS}
+                         for i, c in enumerate(controllers)}
+                        if len(history) >= 2 else None),
                 "ema_cpu": ({c: float(vectors[i][config.METRICS.index("cpu")])
                              for i, c in enumerate(controllers)}
                             if len(history) >= 2 else None),

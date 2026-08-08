@@ -20,4 +20,13 @@ fi
 if [ "$#" -eq 0 ]; then
   exec bash
 fi
+
+# Confort d'usage : si les arguments commencent par une option, on les considère
+# comme des options du PoC et non comme une commande. Cela permet d'écrire
+# directement « docker compose run --rm emulate --controllers 5 --switches 10 »
+# sans répéter « python3 -m sdn_ctrl_ml_edge.emulation.run_poc ».
+case "$1" in
+  -*) exec python3 -m sdn_ctrl_ml_edge.emulation.run_poc "$@" ;;
+esac
+
 exec "$@"
