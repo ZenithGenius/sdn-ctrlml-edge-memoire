@@ -1,0 +1,15 @@
+# Les scripts shell doivent garder des fins de ligne LF, y compris après un
+# clone sous Windows : avec des fins CRLF, le noyau lit le shebang comme
+# « bash\r » et refuse d'exécuter le script dans le conteneur.
+* text=auto eol=lf
+*.sh text eol=lf
+Dockerfile text eol=lf
+*.yml text eol=lf
+
+# Formats binaires : aucune conversion.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.pdf binary
+*.docx binary
+*.graphml binary

@@ -22,7 +22,9 @@ WORKDIR /sdn
 COPY sdn_ctrl_ml_edge /sdn/sdn_ctrl_ml_edge
 COPY tests /sdn/tests
 COPY docker/entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+# Retrait des retours chariot : un clone sous Windows peut livrer le script en
+# CRLF, et le shebang serait alors lu comme « bash\r » (script inexécutable).
+RUN sed -i 's/\r$//' /entrypoint.sh && chmod +x /entrypoint.sh
 ENV PYTHONPATH=/sdn
 ENV PYTHONUNBUFFERED=1
 
