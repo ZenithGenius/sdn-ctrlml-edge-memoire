@@ -1,0 +1,54 @@
+# Banc d'essai SDN_CTRLML-Edge : même commande sur Linux, macOS et Windows.
+#
+#   docker compose -f docker/docker-compose.yml run --rm emulate
+#   docker compose -f docker/docker-compose.yml run --rm baseline
+#   docker compose -f docker/docker-compose.yml run --rm emulate \
+#       python3 -m sdn_ctrl_ml_edge.emulation.run_poc --controllers 6 --switches 16 --traffic pics
+#
+# Prérequis : le module noyau openvswitch doit être chargé sur l'hôte
+# (Linux : sudo modprobe openvswitch ; Windows : noyau WSL2 recompilé, cf. README).
+
+services:
+  # Émulation avec rééquilibrage : la contribution du mémoire.
+  emulate: &emulation
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: sdn-ctrlml-edge-emu
+    # Mininet crée des espaces de noms réseau et manipule les interfaces.
+    # Pas de network_mode: host, inutile ici (contrôleurs et rééquilibreur
+    # dialoguent en 127.0.0.1 dans le conteneur) et mal supporté hors Linux.
+    privileged: true
+    volumes:
+      - /lib/modules:/lib/modules:ro    # accès au datapath du noyau hôte
+      - ../reports/emulation:/sdn/out   # traces et résultats récupérés côté hôte
+    command:
+      - python3
+      - -m
+      - sdn_ctrl_ml_edge.emulation.run_poc
+      - --controllers=3
+      - --switches=6
+      - --rounds=10
+      - --trace-out=/sdn/out/trace.json
+
+  # Même charge, sans rééquilibrage : la référence à laquelle comparer.
+  baseline:
+    <<: *emulation
+    command:
+      - python3
+      - -m
+      - sdn_ctrl_ml_edge.emulation.run_poc
+      - --controllers=3
+      - --switches=6
+      - --rounds=10
+      - --no-rebalance
+
+  # Simulateur et tests : ni privilèges ni noyau particulier, tourne partout.
+  sim:
+    <<: *emulation
+    privileged: false
+    environment:
+      START_OVS: "0"            # ni datapath ni privilèges : Open vSwitch inutile
+    volumes:
+      - ../reports:/sdn/reports
+    command: ["python3", "-m", "pytest", "-q", "/sdn/tests"]

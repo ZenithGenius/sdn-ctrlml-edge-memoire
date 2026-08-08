@@ -1,4 +1,4 @@
-.PHONY: help venv requirements test simulate evaluate experiment analyze flowviz emulate mlflow-ui clean
+.PHONY: help venv requirements test simulate evaluate experiment analyze flowviz emulate compose-emulate mlflow-ui clean
 
 PY := .venv/bin/python
 PIP := .venv/bin/pip
@@ -12,7 +12,8 @@ help:
 	@echo "experiment   - plan d'expériences ~1000 runs (multi-seeds) + MLflow (SEEDS=25)"
 	@echo "analyze      - analyse statistique (IC95 + Wilcoxon) + figures + rapport"
 	@echo "flowviz      - génère reports/flux_sdn.html (flux en direct, à ouvrir au navigateur)"
-	@echo "emulate      - PoC réel sur OVS/OpenFlow (Containernet+Ryu ; Docker requis)"
+	@echo "emulate      - PoC réel sur OVS/OpenFlow (Mininet+os-ken ; Docker requis)"
+	@echo "compose-emulate - idem via docker compose (marche aussi sous Windows)"
 	@echo "mlflow-ui    - ouvre l'UI MLflow sur http://127.0.0.1:5000"
 	@echo "clean        - supprime caches et artefacts"
 
@@ -48,6 +49,13 @@ flowviz:
 ARGS ?=
 emulate:
 	sdn_ctrl_ml_edge/emulation/run.sh $(ARGS)
+
+# Équivalent multiplateforme (Windows compris), sans make ni bash :
+#   docker compose -f docker/docker-compose.yml run --rm emulate
+#   docker compose -f docker/docker-compose.yml run --rm baseline
+#   docker compose -f docker/docker-compose.yml run --rm sim
+compose-emulate:
+	docker compose -f docker/docker-compose.yml run --rm emulate
 
 mlflow-ui:
 	.venv/bin/mlflow ui --backend-store-uri sqlite:///mlflow.db

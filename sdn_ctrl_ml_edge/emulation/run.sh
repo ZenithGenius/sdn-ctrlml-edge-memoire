@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
-# Construit et lance le PoC d'émulation réelle SDN_CTRLML-Edge (Mininet + OVS + os-ken).
+# Lance le PoC d'émulation réelle SDN_CTRLML-Edge (Mininet + OVS + os-ken).
+#
+# Raccourci pour Linux/macOS. Multiplateforme (Windows compris), préférez :
+#   docker compose -f docker/docker-compose.yml run --rm emulate
 #
 # Prérequis : Docker, et le module noyau openvswitch chargé sur l'hôte
-#   (sudo modprobe openvswitch  ;  vérifier : lsmod | grep openvswitch).
-# L'émulation OVS a besoin des droits root -> lancer avec sudo si docker l'exige.
+#   (sudo modprobe openvswitch  ;  vérifier : grep openvswitch /proc/modules).
 #
 # Usage :
 #   sdn_ctrl_ml_edge/emulation/run.sh                 # rééquilibrage activé (proposé)
@@ -15,7 +17,7 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 IMG=sdn-ctrlml-edge-emu
 
 echo ">> Construction de l'image $IMG (première fois : ~quelques minutes)…"
-docker build -t "$IMG" -f "$ROOT/sdn_ctrl_ml_edge/emulation/Dockerfile" "$ROOT"
+docker build -t "$IMG" -f "$ROOT/docker/Dockerfile" "$ROOT"
 
 echo ">> Vérification du datapath OVS (module noyau)…"
 # /proc/modules plutôt que lsmod : toujours lisible, et lsmod (dans /sbin) n'est pas
@@ -27,8 +29,10 @@ if ! grep -q '^openvswitch ' /proc/modules 2>/dev/null; then
 fi
 
 echo ">> Lancement du PoC…"
-# L'ENTRYPOINT de l'image démarre Open vSwitch puis lance un `bash` en ignorant la
-# commande : on lui fournit donc le PoC sur son entrée standard. --privileged et le
-# montage de /lib/modules donnent au conteneur l'accès au datapath du noyau hôte.
-echo "cd /sdn && exec python3 -m sdn_ctrl_ml_edge.emulation.run_poc $*" \
-  | docker run -i --privileged --rm -v /lib/modules:/lib/modules:ro "$IMG"
+# --privileged et le montage de /lib/modules donnent au conteneur l'accès au
+# datapath du noyau hôte ; reports/ est monté pour que --trace-out survive à --rm.
+mkdir -p "$ROOT/reports/emulation"
+docker run --rm --privileged \
+  -v /lib/modules:/lib/modules:ro \
+  -v "$ROOT/reports:/sdn/reports" \
+  "$IMG" python3 -m sdn_ctrl_ml_edge.emulation.run_poc "$@"
