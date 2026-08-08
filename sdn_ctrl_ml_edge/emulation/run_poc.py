@@ -14,6 +14,7 @@ Ne tourne pas dans ce bac à sable (OVS/root indisponibles) : lancé par run.sh 
 from __future__ import annotations
 
 import argparse
+import logging
 import subprocess
 import sys
 import time
@@ -28,6 +29,8 @@ warnings.filterwarnings("ignore", message=".*Number of distinct clusters.*")
 from .rebalancer import apply_moves, plan_reassignments, poll_loads, smooth_loads
 
 TIERS = [6000.0, 3500.0, 1800.0]                          # capacités Cloud/Fog/Edge
+
+log = logging.getLogger(__name__)
 
 
 def jain(values):
@@ -112,7 +115,11 @@ def main():
                    help="lissage EMA des charges avant décision (0 = pas de lissage)")
     p.add_argument("--no-ema", action="store_true",
                    help="décider sur la mesure brute (montre l'apport de l'EMA)")
+    p.add_argument("--trace-out", default=None,
+                   help="écrit la trace de l'exécution en JSON (pour make flowviz --from)")
     args = p.parse_args()
+    logging.basicConfig(level=logging.INFO, format="%(message)s",
+                        stream=sys.stdout)
 
     from mininet.log import setLogLevel
     setLogLevel("warning")
@@ -121,11 +128,11 @@ def main():
     rest = {c: f"http://127.0.0.1:{args.base_rest_port + c}" for c in range(args.controllers)}
     ep = {c: f"tcp:127.0.0.1:{args.base_of_port + c}" for c in range(args.controllers)}
 
-    print(">> démarrage des contrôleurs os-ken…")
+    log.info(">> démarrage des contrôleurs os-ken…")
     procs = start_controllers(args.controllers, args.base_of_port, args.base_rest_port)
     time.sleep(4)
 
-    print(">> construction de la topologie (switches OVS + hôtes)…")
+    log.info(">> construction de la topologie (switches OVS + hôtes)…")
     net, switches, hosts = build_net(args.controllers, args.switches,
                                      args.hosts_per_switch, args.base_of_port)
     try:
@@ -164,12 +171,27 @@ def main():
             "".join(f"{tier_name.get(capacity[c], '?'):^{col}}" + "|" for c in cids) + \
             f" {'':<5} | {'déplacés':<10} |"
 
-        print(f"\n>> Mode : {mode}")
-        print(f">> Réseau : {args.controllers} contrôleurs, {args.switches} switches, "
+        log.info(f"\n>> Mode : {mode}")
+        log.info(f">> Réseau : {args.controllers} contrôleurs, {args.switches} switches, "
               f"{len(hosts)} hôtes · trafic {args.traffic}")
-        print(">> Charge = Packet-In/s par contrôleur (mesurée sur l'intervalle)")
-        print(">> Jain* = équité pondérée par la capacité (1 = « à chacun selon sa capacité »)\n")
-        print(sep); print(head1); print(head2); print(sep)
+        log.info(">> Charge = Packet-In/s par contrôleur (mesurée sur l'intervalle)")
+        log.info(">> Jain* = équité pondérée par la capacité (1 = « à chacun selon sa capacité »)\n")
+        log.info(sep); log.info(head1); log.info(head2); log.info(sep)
+
+        # Trace destinée à la visualisation : on enregistre l'état réel mesuré à
+        # chaque cycle, pour rejouer ensuite l'émulation à l'écran sans la relancer.
+        tier_of = {6000.0: "cloud", 3500.0: "fog", 1800.0: "edge"}
+        trace = {"meta": {"controllers": args.controllers, "switches": args.switches,
+                          "hosts_per_switch": args.hosts_per_switch,
+                          "n_hosts": len(hosts),
+                          "traffic": args.traffic, "rebalance": not args.no_rebalance,
+                          "capacity": {str(c): capacity[c] for c in cids},
+                          # Poids relatifs Cloud/Fog/Edge pour la part équitable —
+                          # pas des plafonds CPU qui couperaient le trafic.
+                          "tiers": {str(c): tier_of.get(capacity[c], "edge") for c in cids},
+                          "balancer": "SDN_CTRLML-Edge (K-means++ multi-métriques + délestage/remplissage)"},
+                 "cycles": []}
+        assign = {}                       # dernier rattachement connu, switch -> contrôleur
 
         state, ema = None, None
         for rnd in range(args.rounds):
@@ -177,7 +199,7 @@ def main():
             try:
                 loads, sw_ctrl, sw_load, state = poll_loads(rest, capacity, state)
             except Exception as e:
-                print(f"| {rnd:<4} | lecture impossible: {e}"); continue
+                log.info(f"| {rnd:<4} | lecture impossible: {e}"); continue
             rates = [loads[c]["packetin_rate_total"] for c in cids]
             j = jain(rates)
             jw = jain_weighted(rates, [capacity[c] for c in cids])
@@ -186,24 +208,49 @@ def main():
             # brute : le tableau affiche le réel, l'algorithme ignore les transitoires.
             ema = smooth_loads(loads, ema, 1.0 if args.no_ema else args.alpha)
             moves = {}
+            decision = {}
             if not args.no_rebalance:
                 smoothed = {c: {"packetin_rate_total": ema[c],
                                 "flows_total": loads[c]["flows_total"]} for c in loads}
-                moves = plan_reassignments(smoothed, sw_ctrl, sw_load, capacity,
-                                           loads_raw=loads)
+                moves, decision = plan_reassignments(smoothed, sw_ctrl, sw_load, capacity,
+                                                     loads_raw=loads)
                 if moves:
                     apply_moves(moves, ep)
+            assign.update(sw_ctrl)                       # rattachements observés
+            assign.update(moves)                         # puis ceux qu'on vient d'appliquer
+            cycle = {
+                "round": rnd,
+                "load": {str(c): round(loads[c]["packetin_rate_total"], 2) for c in cids},
+                "assign": {str(s): int(c) for s, c in sorted(assign.items())},
+                "moves": {str(s): int(c) for s, c in sorted(moves.items())},
+                "jain": None if j is None else round(j, 4),
+                "jain_w": None if jw is None else round(jw, 4),
+            }
+            if decision:
+                cycle["cluster"] = decision["cluster"]
+                cycle["profile"] = decision["profile"]
+                cycle["silhouette"] = decision["silhouette"]
+                cycle["k"] = decision["k"]
+            trace["cycles"].append(cycle)
+
             moved = ",".join(f"s{s}" for s in sorted(moves)) or "-"
             fmt = lambda x: f"{x:5.3f}" if x is not None else " n/a "  # noqa: E731
             row = f"| {rnd:<4} | {fmt(j)} | {fmt(jw)} |" + \
                 "".join(f"{r:^{col}.1f}" + "|" for r in rates) + \
                 f" {len(moves):<5} | {moved[:10]:<10} |"
-            print(row)
-        print(sep)
+            log.info(row)
+        log.info(sep)
 
-        print("\n>> Lecture : l'indice de Jain vaut 1 quand la charge est parfaitement")
-        print(">> répartie. Sans rééquilibrage elle reste concentrée sur c0 (Jain bas) ;")
-        print(">> avec l'algorithme, les switches migrent vers les contrôleurs sains.")
+        if args.trace_out:
+            import json
+            from pathlib import Path
+            Path(args.trace_out).parent.mkdir(parents=True, exist_ok=True)
+            Path(args.trace_out).write_text(json.dumps(trace), encoding="utf-8")
+            log.info(f"\n>> Trace écrite : {args.trace_out}")
+
+        log.info("\n>> Lecture : l'indice de Jain vaut 1 quand la charge est parfaitement")
+        log.info(">> répartie. Sans rééquilibrage elle reste concentrée sur c0 (Jain bas) ;")
+        log.info(">> avec l'algorithme, les switches migrent vers les contrôleurs sains.")
     finally:
         net.stop()
         for pr in procs:

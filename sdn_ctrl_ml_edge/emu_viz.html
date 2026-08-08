@@ -1,0 +1,497 @@
+<!doctype html>
+<html lang="fr"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SDN_CTRLML-Edge — rejeu d'émulation</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --navy:#1F4E79; --ink:#2b3446; --muted:#6b7688; --line:#d8dee8;
+  --bg:#eef2f7; --panel:#fff; --ok:#2E8B57; --hot:#C0392B; --warn:#E0A800;
+  --side:248px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{font-family:"IBM Plex Sans",system-ui,sans-serif;color:var(--ink);background:var(--bg);
+     display:flex;flex-direction:column;overflow:hidden}
+.mono{font-family:"IBM Plex Mono",ui-monospace,monospace}
+.app{flex:1;display:grid;grid-template-columns:var(--side) 1fr;min-height:0}
+@media(max-width:860px){.app{grid-template-columns:1fr}.sidebar{display:none}.sidebar.open{display:flex}}
+
+.sidebar{background:var(--panel);border-right:1px solid var(--line);padding:18px 14px;
+         display:flex;flex-direction:column;gap:14px;overflow:auto}
+.brand{color:var(--navy);font-weight:700;font-size:1.05rem;line-height:1.25}
+.brand span{display:block;font-weight:500;font-size:.72rem;color:var(--muted);margin-top:4px}
+.infra{background:#eef3f9;border-radius:10px;padding:10px;font-size:.78rem;color:var(--muted);line-height:1.45}
+.nav{display:flex;flex-direction:column;gap:4px}
+.nav button{text-align:left;background:transparent;border:0;border-radius:8px;padding:10px 12px;
+            font:inherit;font-weight:500;color:var(--ink);cursor:pointer}
+.nav button:hover,.nav button:focus-visible{background:#eef3f9;outline:2px solid var(--navy);outline-offset:1px}
+.nav button.active{background:#e3edf7;color:var(--navy);font-weight:600}
+.phase-pill{margin-top:auto;padding:10px 12px;border-radius:10px;font-weight:700;font-size:.85rem;text-align:center}
+.phase-pill.reb{background:#fde8e6;color:var(--hot)}
+.phase-pill.ok{background:#e6f6ec;color:var(--ok)}
+
+.stage{display:flex;flex-direction:column;min-width:0;min-height:0;position:relative}
+.stage-head{display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--panel);
+            border-bottom:1px solid var(--line)}
+.stage-head h1{font-size:1rem;color:var(--navy);font-weight:600;flex:1}
+.menu-btn{display:none;background:var(--navy);color:#fff;border:0;border-radius:8px;padding:8px 12px;font:inherit;cursor:pointer}
+@media(max-width:860px){.menu-btn{display:inline-block}}
+.canvas-wrap{flex:1;min-height:0;padding:8px;display:flex}
+.canvas-wrap canvas{width:100%;height:100%;background:#fbfcfe;border-radius:10px;border:1px solid var(--line)}
+
+.transport{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:10px 14px;
+           background:var(--panel);border-top:1px solid var(--line)}
+.transport button{background:var(--navy);color:#fff;border:0;border-radius:8px;padding:8px 14px;
+                  font:inherit;font-weight:600;cursor:pointer}
+.transport button.ghost{background:#eef1f6;color:var(--navy)}
+.transport input[type=range]{width:220px}
+.kpi{font-variant-numeric:tabular-nums;font-weight:700;color:var(--navy)}
+.flash{color:var(--hot);font-weight:700}
+
+.backdrop{position:fixed;inset:0;background:rgba(20,30,45,.45);display:none;align-items:center;
+          justify-content:center;z-index:40;padding:20px}
+.backdrop.open{display:flex}
+.modal{background:var(--panel);border-radius:14px;max-width:720px;width:100%;max-height:min(86vh,820px);
+       overflow:auto;box-shadow:0 16px 48px rgba(20,30,45,.25);border:1px solid var(--line)}
+.modal header{display:flex;align-items:center;gap:12px;padding:14px 16px;border-bottom:1px solid var(--line);
+              position:sticky;top:0;background:var(--panel);z-index:1}
+.modal header h2{flex:1;font-size:1.05rem;color:var(--navy)}
+.modal .body{padding:16px}
+.modal .x{background:#eef1f6;border:0;border-radius:8px;width:36px;height:36px;cursor:pointer;font-size:1.1rem;color:var(--navy)}
+.drawer{position:fixed;top:0;left:0;bottom:0;width:min(300px,92vw);background:var(--panel);z-index:50;
+        border-right:1px solid var(--line);transform:translateX(-105%);transition:transform .2s ease;
+        padding:18px 14px;overflow:auto;box-shadow:4px 0 24px rgba(20,30,45,.12)}
+.drawer.open{transform:translateX(0)}
+.drawer h2{color:var(--navy);font-size:1rem;margin-bottom:12px}
+.drawer label.row{display:flex;align-items:center;gap:8px;margin:8px 0;font-size:.9rem;cursor:pointer}
+.drawer .hint{font-size:.75rem;color:var(--muted);margin-top:12px;line-height:1.4}
+@media(prefers-reduced-motion:reduce){.drawer{transition:none}}
+
+table.loads{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums;font-size:.9rem}
+table.loads th,table.loads td{padding:8px 10px;text-align:left;border-bottom:1px solid var(--line)}
+table.loads th{background:#eef3f9;color:var(--navy);font-size:.8rem}
+table.loads .num{text-align:right;font-weight:600}
+table.loads tr.hot td{background:#fde8e6}
+table.loads tr.idle td{background:#f3f4f7;color:#8a93a3}
+.pipeline{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:12px 0 16px}
+.pipeline .step{background:#eef3f9;border:1px solid var(--line);border-radius:8px;padding:8px 10px;
+                font-size:.8rem;font-weight:600;color:var(--navy)}
+.pipeline .arrow{color:var(--muted);font-size:.85rem}
+.tl{display:flex;height:18px;border-radius:9px;overflow:hidden;border:1px solid var(--line);cursor:pointer;margin:8px 0}
+.tl i{flex:1;display:block;position:relative}
+.tl i.reb{background:#f5a39a}.tl i.ok{background:#8fd4a8}
+.tl i.cur::after{content:'';position:absolute;inset:0;box-shadow:inset 0 0 0 2px var(--navy)}
+.note{color:var(--muted);font-size:.85rem;line-height:1.45;margin-top:8px}
+.badge{display:inline-block;padding:2px 8px;border-radius:6px;font-size:.75rem;font-weight:700}
+.badge.hot{background:#fde8e6;color:var(--hot)}
+.badge.under{background:#e8f1fb;color:var(--navy)}
+.badge.ok{background:#e6f6ec;color:var(--ok)}
+.badge.norm{background:#eef1f6;color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar" id="sidebar">
+    <div class="brand">SDN_CTRLML-Edge<span>Rejeu d'émulation OpenFlow</span></div>
+    <div class="infra" id="infra"></div>
+    <nav class="nav" aria-label="Navigation">
+      <button type="button" data-open="drawer-display">Affichage</button>
+      <button type="button" data-modal="modal-loads">Charges</button>
+      <button type="button" data-modal="modal-timeline">Timeline</button>
+      <button type="button" data-modal="modal-algo" class="active">Algorithme</button>
+      <button type="button" data-modal="modal-about">À propos</button>
+    </nav>
+    <div class="phase-pill reb" id="phase-pill">Rééquilibrage</div>
+  </aside>
+  <div class="stage">
+    <div class="stage-head">
+      <button type="button" class="menu-btn" id="menu-btn" aria-label="Menu">Menu</button>
+      <h1 id="stage-title">Plan de contrôle &amp; données</h1>
+      <span class="mono kpi" id="cyc-head">cycle 1</span>
+    </div>
+    <div class="canvas-wrap"><canvas id="cv" aria-label="Topologie SDN animée"></canvas></div>
+    <div class="transport">
+      <button type="button" id="play">Pause</button>
+      <button type="button" class="ghost" id="restart">Rejouer</button>
+      <label>Cycle <span class="kpi mono" id="cyc">1</span></label>
+      <input type="range" id="scrub" min="0" value="0" aria-label="Position cycle">
+      <label>Jain* <span class="kpi mono" id="jain">-</span></label>
+      <label>Total <span class="kpi mono" id="tot">-</span> PI/s</label>
+      <span id="mv"></span>
+    </div>
+  </div>
+</div>
+
+<div class="drawer" id="drawer-display" role="dialog" aria-label="Config affichage">
+  <h2>Affichage</h2>
+  <label class="row"><input type="checkbox" id="cfg-hosts" checked> Hôtes</label>
+  <label class="row"><input type="checkbox" id="cfg-host-traf" checked> Trafic hôtes → OVS</label>
+  <label class="row"><input type="checkbox" id="cfg-south" checked> Plan Sud (Packet-In)</label>
+  <label class="row"><input type="checkbox" id="cfg-ew" checked> Est-Ouest</label>
+  <label class="row"><input type="checkbox" id="cfg-hlabels"> Labels hôtes</label>
+  <div style="margin-top:12px;font-size:.9rem">Intensité
+    <input type="range" id="cfg-inten" min="1" max="3" value="2" style="width:100%">
+  </div>
+  <p class="hint">Modifier la taille du réseau = relancer <code>run.sh</code>. Ce panneau ne change que l'affichage.</p>
+  <button type="button" class="ghost" id="drawer-close" style="margin-top:14px;background:#eef1f6;color:var(--navy);border:0;border-radius:8px;padding:8px 14px;font:inherit;font-weight:600;cursor:pointer;width:100%">Fermer</button>
+</div>
+
+<div class="backdrop" id="backdrop" aria-hidden="true">
+  <div class="modal" id="modal-loads" role="dialog" aria-modal="true" aria-labelledby="t-loads" hidden>
+    <header><h2 id="t-loads">Charges par contrôleur</h2><button type="button" class="x" data-close aria-label="Fermer">×</button></header>
+    <div class="body">
+      <table class="loads"><thead><tr>
+        <th>Ctrl</th><th>Palier</th><th class="num">Poids</th><th class="num">Charge</th>
+        <th class="num">Part</th><th class="num">Sw</th><th>Profil</th>
+      </tr></thead><tbody id="tbody"></tbody></table>
+      <p class="note">Poids = part équitable relative (Cloud/Fog/Edge), pas un plafond CPU matériel.</p>
+    </div>
+  </div>
+  <div class="modal" id="modal-timeline" role="dialog" aria-modal="true" aria-labelledby="t-tl" hidden>
+    <header><h2 id="t-tl">Timeline des cycles</h2><button type="button" class="x" data-close aria-label="Fermer">×</button></header>
+    <div class="body">
+      <div class="tl" id="tl" title="Rouge = migrations, vert = stabilisé"></div>
+      <p class="note">Cliquez un segment pour aller au cycle. Rouge = l'algorithme a migré des switches.</p>
+      <div id="tl-list" class="mono" style="font-size:.8rem;margin-top:12px;line-height:1.7"></div>
+    </div>
+  </div>
+  <div class="modal" id="modal-algo" role="dialog" aria-modal="true" aria-labelledby="t-algo" hidden>
+    <header><h2 id="t-algo">Algorithme SDN_CTRLML-Edge</h2><button type="button" class="x" data-close aria-label="Fermer">×</button></header>
+    <div class="body">
+      <p class="note">Ce qui équilibre le plan de contrôle, ce n'est <b>pas</b> une limite CPU : ce sont les migrations décidées ici.</p>
+      <div class="pipeline" aria-hidden="true">
+        <span class="step">Mesure Packet-In</span><span class="arrow">→</span>
+        <span class="step">EMA</span><span class="arrow">→</span>
+        <span class="step">Vecteurs multi-métriques</span><span class="arrow">→</span>
+        <span class="step">K-means++</span><span class="arrow">→</span>
+        <span class="step">Profils</span><span class="arrow">→</span>
+        <span class="step">Délestage / remplissage</span><span class="arrow">→</span>
+        <span class="step">ovs-vsctl</span>
+      </div>
+      <p style="font-size:.9rem;margin-bottom:8px"><b>Décision du cycle courant</b>
+        · silhouette <span class="mono kpi" id="algo-sil">-</span>
+        · k=<span class="mono kpi" id="algo-k">-</span></p>
+      <table class="loads"><thead><tr>
+        <th>Ctrl</th><th class="num">Cluster</th><th>Profil</th><th class="num">PI/s</th><th class="num">Part</th>
+      </tr></thead><tbody id="algo-body"></tbody></table>
+      <p style="margin-top:12px;font-size:.9rem"><b>Migrations ce cycle</b></p>
+      <p class="mono" id="algo-moves" style="font-size:.85rem;margin-top:4px">—</p>
+    </div>
+  </div>
+  <div class="modal" id="modal-about" role="dialog" aria-modal="true" aria-labelledby="t-about" hidden>
+    <header><h2 id="t-about">À propos de ce rejeu</h2><button type="button" class="x" data-close aria-label="Fermer">×</button></header>
+    <div class="body">
+      <p class="note">Rejeu fidèle d'une trace produite par le PoC Mininet + OVS + os-ken.
+      Les hôtes génèrent le trafic (ping + pics). Les points animés illustrent la direction
+      (hôte→OVS, OVS→maître) proportionnellement à la charge mesurée — ce ne sont pas des
+      Packet-In individuels capturés. Les migrations affichées sont celles de l'algorithme
+      du mémoire (clustering K-means++ multi-métriques + délestage/remplissage).</p>
+    </div>
+  </div>
+</div>
+
+<script>
+const DATA = __PAYLOAD__;
+const F = DATA.cycles.edge, NF = F.length;
+const LARGE = !!DATA.meta.large;
+const TIER_FR = {cloud:'Cloud', fog:'Fog', edge:'Edge', host:'Hôte'};
+const nodes = DATA.nodes, byId = {}; nodes.forEach(n => byId[n.id] = n);
+const ctrls = nodes.filter(n => n.ctrl);
+const sws = nodes.filter(n => n.kind === 'sw' || (!n.ctrl && n.kind !== 'host' && n.home == null));
+const hosts = nodes.filter(n => n.kind === 'host');
+const NAVY = '#1F4E79';
+const DPAL = ['#5B8FF9','#61DDAA','#F6BD16','#7262FD','#78D3F8','#F08BB4','#9270CA','#F6903D'];
+const dcol = cid => DPAL[(ctrls.findIndex(c => c.id === cid) + 8) % DPAL.length];
+const hx = s => [1,3,5].map(i => parseInt(s.substr(i,2),16));
+const lerp = (a,b,t) => a+(b-a)*t;
+function loadColor(v){
+  const st=[[0,'#2E8B57'],[.5,'#E0A800'],[.75,'#E8590C'],[1,'#C0392B']];
+  let a=st[0],b=st[st.length-1];
+  for(let i=0;i<st.length-1;i++){ if(v>=st[i][0]&&v<=st[i+1][0]){a=st[i];b=st[i+1];break;} }
+  const t=(v-a[0])/((b[0]-a[0])||1), c1=hx(a[1]), c2=hx(b[1]);
+  return `rgb(${lerp(c1[0],c2[0],t)|0},${lerp(c1[1],c2[1],t)|0},${lerp(c1[2],c2[2],t)|0})`;
+}
+const ICON = {
+  cloud:"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect x='6' y='5' width='20' height='9' rx='2' fill='#1F4E79'/><rect x='6' y='18' width='20' height='9' rx='2' fill='#1F4E79'/><circle cx='10' cy='9.5' r='1.6' fill='#7FE0A8'/><circle cx='10' cy='22.5' r='1.6' fill='#7FE0A8'/></svg>",
+  fog:"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><path d='M16 11 V4 M12.5 7 L16 3.5 L19.5 7' stroke='#1F4E79' stroke-width='2.4' fill='none' stroke-linecap='round'/><rect x='6' y='12' width='20' height='11' rx='2.5' fill='#1F4E79'/><circle cx='11' cy='17.5' r='1.5' fill='#fff'/><circle cx='16' cy='17.5' r='1.5' fill='#fff'/><circle cx='21' cy='17.5' r='1.5' fill='#fff'/></svg>",
+  edge:"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect x='4' y='12' width='24' height='9' rx='2' fill='#1F4E79'/><rect x='7' y='15' width='2.5' height='3' fill='#fff'/><rect x='11.5' y='15' width='2.5' height='3' fill='#fff'/><rect x='16' y='15' width='2.5' height='3' fill='#fff'/><rect x='20.5' y='15' width='2.5' height='3' fill='#fff'/></svg>",
+  sw:"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><rect x='3' y='9' width='18' height='7' rx='1.5' fill='#7c8aa3'/><rect x='6' y='11' width='2' height='2.5' fill='#fff'/><rect x='10' y='11' width='2' height='2.5' fill='#fff'/><rect x='14' y='11' width='2' height='2.5' fill='#fff'/></svg>",
+  host:"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'><rect x='4' y='3' width='12' height='10' rx='1.5' fill='#5a6a82'/><rect x='7' y='13' width='6' height='2' fill='#5a6a82'/><rect x='5' y='15' width='10' height='1.5' fill='#5a6a82'/></svg>"};
+const IMG={};
+const loadIcons=()=>Promise.all(Object.entries(ICON).map(([k,s])=>new Promise(r=>{
+  const im=new Image(); im.onload=()=>{IMG[k]=im;r();}; im.onerror=()=>r();
+  im.src='data:image/svg+xml;charset=utf-8,'+encodeURIComponent(s);})));
+
+document.getElementById('infra').textContent =
+  `${DATA.meta.n_ctrl} ctrl · ${DATA.meta.switches} OVS · ${DATA.meta.hosts||0} hôtes · trafic ${DATA.meta.traffic}`;
+
+const CFG_KEY='sdn_emu_viz_cfg_v2';
+const cfg={hosts:true,hostTraf:true,south:true,ew:true,hLabels:false,inten:2};
+try{Object.assign(cfg, JSON.parse(localStorage.getItem(CFG_KEY)||'{}'));}catch(_){}
+function bindCfg(){
+  const map=[['cfg-hosts','hosts'],['cfg-host-traf','hostTraf'],['cfg-south','south'],['cfg-ew','ew'],['cfg-hlabels','hLabels']];
+  for(const [id,key] of map){const el=document.getElementById(id); el.checked=!!cfg[key];
+    el.onchange=()=>{cfg[key]=el.checked; localStorage.setItem(CFG_KEY, JSON.stringify(cfg));};}
+  const inten=document.getElementById('cfg-inten'); inten.value=cfg.inten;
+  inten.oninput=()=>{cfg.inten=+inten.value; localStorage.setItem(CFG_KEY, JSON.stringify(cfg));};
+}
+
+/* ---- modals / drawer ---- */
+let lastFocus=null, openId=null;
+function openModal(id){
+  lastFocus=document.activeElement; openId=id;
+  const bd=document.getElementById('backdrop');
+  bd.classList.add('open'); bd.setAttribute('aria-hidden','false');
+  document.querySelectorAll('.backdrop .modal').forEach(m=>{ m.hidden = m.id!==id; });
+  const m=document.getElementById(id);
+  const btn=m.querySelector('[data-close]'); if(btn) btn.focus();
+  fillTable(); fillAlgo();
+}
+function closeModal(){
+  const bd=document.getElementById('backdrop');
+  bd.classList.remove('open'); bd.setAttribute('aria-hidden','true');
+  document.querySelectorAll('.backdrop .modal').forEach(m=>m.hidden=true);
+  openId=null; if(lastFocus) lastFocus.focus();
+}
+function openDrawer(){ document.getElementById('drawer-display').classList.add('open'); }
+function closeDrawer(){ document.getElementById('drawer-display').classList.remove('open'); }
+document.querySelectorAll('[data-modal]').forEach(b=>b.onclick=()=>{closeDrawer(); openModal(b.dataset.modal);});
+document.querySelectorAll('[data-open]').forEach(b=>b.onclick=()=>{closeModal(); openDrawer();});
+document.querySelectorAll('[data-close]').forEach(b=>b.onclick=closeModal);
+document.getElementById('drawer-close').onclick=closeDrawer;
+document.getElementById('backdrop').onclick=e=>{ if(e.target.id==='backdrop') closeModal(); };
+document.getElementById('menu-btn').onclick=()=>document.getElementById('sidebar').classList.toggle('open');
+document.addEventListener('keydown', e=>{
+  if(e.key==='Escape'){ closeModal(); closeDrawer(); document.getElementById('sidebar').classList.remove('open'); }
+});
+
+const cv=document.getElementById('cv');
+const ctx=cv.getContext('2d');
+function sizeCanvas(){
+  const wrap=cv.parentElement;
+  const w=Math.max(640, wrap.clientWidth|0), h=Math.max(360, wrap.clientHeight|0);
+  if(cv.width!==w || cv.height!==h){ cv.width=w; cv.height=h; }
+}
+const px = n => 50 + n.x * (cv.width - 100);
+const py = n => cv.height - 50 - n.y * (cv.height - 100);
+
+const st={cyc:0,playing:true,acc:0,parts:[],tick:0};
+const nMoves = i => Object.keys(F[i].moves||{}).length;
+let STABLE_FROM=-1;
+for(let i=0;i<NF;i++){ if(nMoves(i)===0 && F.slice(i).every((_,j)=>nMoves(i+j)===0)){ STABLE_FROM=i; break; } }
+const isStable = i => STABLE_FROM>=0 && i>=STABLE_FROM;
+document.getElementById('scrub').max=NF-1;
+
+const tl=document.getElementById('tl'), tlList=document.getElementById('tl-list');
+F.forEach((f,i)=>{
+  const el=document.createElement('i');
+  el.className=(nMoves(i)?'reb':'ok')+(i===0?' cur':'');
+  el.title=`Cycle ${i+1}`;
+  el.onclick=()=>{ st.cyc=i; st.playing=false; document.getElementById('play').textContent='Lecture'; closeModal(); };
+  tl.appendChild(el);
+  const line=document.createElement('div');
+  line.textContent=`c${i+1}  Jain* ${(f.jain==null?'-':f.jain.toFixed(3))}  migr=${nMoves(i)}`;
+  line.style.cursor='pointer'; line.onclick=()=>{ st.cyc=i; };
+  tlList.appendChild(line);
+});
+
+function frame(){ return F[st.cyc]; }
+function masterOf(swId){ return frame().assign[String(swId)]; }
+function profileBadge(p){
+  if(p==='surchargé') return '<span class="badge hot">surchargé</span>';
+  if(p==='sous-utilisé') return '<span class="badge under">sous-utilisé</span>';
+  return '<span class="badge norm">normal</span>';
+}
+function spawn(){
+  const f=frame(); st.tick++;
+  const inten=cfg.inten||2;
+  if(cfg.hosts && cfg.hostTraf){
+    for(const h of hosts){
+      const s=byId[h.home]; if(!s) continue;
+      const cid=masterOf(s.id); if(cid==null) continue;
+      const rate=(f.rate&&f.rate[String(cid)])||0; if(rate<=0) continue;
+      const period=Math.max(1, Math.round((LARGE?6:4)/inten));
+      if((st.tick+h.id)%period!==0) continue;
+      st.parts.push({sx:px(h),sy:py(h),dx:px(s),dy:py(s),t:0,v:0.028,col:'#5a6a82',r:LARGE?1.6:2,kind:'host'});
+    }
+  }
+  if(cfg.south){
+    for(const s of sws){
+      const cid=f.assign[String(s.id)]; const c=byId[cid]; if(!c) continue;
+      const nsw=Math.max(1,(f.nsw&&f.nsw[String(cid)])||1);
+      const rate=(f.rate&&f.rate[String(cid)])||0;
+      const perTick=Math.min(2, Math.max(rate>0?1:0, Math.round(rate/(nsw*30))));
+      if(perTick<=0) continue;
+      const period=Math.max(1, Math.round((LARGE?5:4-perTick)/inten));
+      if((st.tick+s.id)%period!==0) continue;
+      st.parts.push({sx:px(s),sy:py(s),dx:px(c),dy:py(c),t:0,v:0.022,col:dcol(cid),r:LARGE?2.2:2.8,kind:'south'});
+    }
+  }
+}
+function draw(){
+  sizeCanvas();
+  const f=frame(), W=cv.width, H=cv.height;
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#f2f6fb'; ctx.fillRect(0,0,W,H*0.28);
+  ctx.fillStyle='#f5f7fa'; ctx.fillRect(0,H*0.28,W,H*0.40);
+  ctx.fillStyle='#f7faf7'; ctx.fillRect(0,H*0.68,W,H*0.32);
+  ctx.fillStyle='#8996ab'; ctx.font='italic 12px "IBM Plex Sans",sans-serif'; ctx.textAlign='left';
+  ctx.fillText('Plan de contrôle — SDN_CTRLML-Edge (pas un cap CPU)', 16, 20);
+  ctx.fillText('Commutateurs Open vSwitch', 16, H*0.30+16);
+  ctx.fillText(cfg.hosts?'Hôtes actifs (ping + pics)':'Hôtes masqués', 16, H-12);
+  const stable=isStable(st.cyc);
+  ctx.fillStyle=stable?'rgba(46,139,87,.12)':'rgba(192,57,43,.10)';
+  ctx.fillRect(W-360,6,344,48);
+  ctx.strokeStyle=stable?'#2E8B57':'#C0392B'; ctx.lineWidth=2; ctx.strokeRect(W-360,6,344,48);
+  ctx.fillStyle=stable?'#2E8B57':'#C0392B';
+  ctx.font='bold 15px "IBM Plex Sans",sans-serif';
+  ctx.fillText(stable?'PHASE : STABILISÉ':'PHASE : RÉÉQUILIBRAGE ALGO', W-348, 26);
+  ctx.font='12px "IBM Plex Sans",sans-serif'; ctx.fillStyle='#33415c';
+  ctx.fillText(stable?`0 migration depuis le cycle ${STABLE_FROM+1}`:`${nMoves(st.cyc)} migration(s) ce cycle`, W-348, 44);
+
+  if(cfg.hosts){
+    ctx.strokeStyle='#d0d6e0'; ctx.lineWidth=1; ctx.globalAlpha=.75;
+    for(const h of hosts){ const s=byId[h.home]; if(!s) continue;
+      ctx.beginPath(); ctx.moveTo(px(h),py(h)); ctx.lineTo(px(s),py(s)); ctx.stroke(); }
+    ctx.globalAlpha=1;
+  }
+  if(cfg.south){
+    for(const s of sws){
+      const cid=f.assign[String(s.id)]; const c=byId[cid]; if(!c) continue;
+      const moved=f.moves && f.moves[String(s.id)]!==undefined;
+      ctx.strokeStyle=dcol(cid); ctx.globalAlpha=moved?.95:.28;
+      ctx.lineWidth=moved?3:1.2; ctx.setLineDash(moved?[6,4]:[]);
+      ctx.beginPath(); ctx.moveTo(px(s),py(s)); ctx.lineTo(px(c),py(c)); ctx.stroke();
+    }
+    ctx.globalAlpha=1; ctx.setLineDash([]);
+  }
+  if(cfg.ew){
+    ctx.strokeStyle='rgba(31,78,121,.5)'; ctx.lineWidth=1.4; ctx.setLineDash([6,5]);
+    for(let i=0;i<ctrls.length-1;i++){
+      ctx.beginPath(); ctx.moveTo(px(ctrls[i]),py(ctrls[i])); ctx.lineTo(px(ctrls[i+1]),py(ctrls[i+1])); ctx.stroke(); }
+    ctx.setLineDash([]);
+  }
+  ctx.strokeStyle='#d7dee9'; ctx.lineWidth=2;
+  for(const [a,b] of DATA.edges){ if(a>=2000||b>=2000) continue;
+    const u=byId[a],v=byId[b]; if(!u||!v) continue;
+    ctx.beginPath(); ctx.moveTo(px(u),py(u)); ctx.lineTo(px(v),py(v)); ctx.stroke(); }
+  for(const p of st.parts){
+    if(p.kind==='host'&&(!cfg.hosts||!cfg.hostTraf)) continue;
+    if(p.kind==='south'&&!cfg.south) continue;
+    const x=p.sx+(p.dx-p.sx)*p.t, y=p.sy+(p.dy-p.sy)*p.t;
+    ctx.globalAlpha=.88; ctx.fillStyle=p.col; ctx.beginPath(); ctx.arc(x,y,p.r||2.5,0,7); ctx.fill();
+  }
+  ctx.globalAlpha=1;
+  const swSz=LARGE?18:26, hSz=LARGE?12:16;
+  if(cfg.hosts){ for(const h of hosts){
+    if(IMG.host) ctx.drawImage(IMG.host,px(h)-hSz/2,py(h)-hSz/2,hSz,hSz);
+    if(cfg.hLabels){ ctx.fillStyle='#5a6578'; ctx.font='9px sans-serif'; ctx.textAlign='center';
+      ctx.fillText(h.label,px(h),py(h)+hSz/2+9); }
+  }}
+  for(const s of sws){
+    if(IMG.sw) ctx.drawImage(IMG.sw,px(s)-swSz/2,py(s)-swSz/2,swSz,swSz);
+    ctx.fillStyle='#33415c'; ctx.font=(LARGE?'bold 9px':'bold 11px')+' sans-serif';
+    ctx.textAlign='center'; ctx.fillText(s.label,px(s),py(s)+swSz/2+10);
+  }
+  const R=LARGE?18:22;
+  for(const c of ctrls){
+    const key=String(c.id);
+    const v=f.load[key]||0, rate=(f.rate&&f.rate[key])||0, nsw=(f.nsw&&f.nsw[key])||0;
+    const fair=(f.fair&&f.fair[key])||0, hot=f.hot.includes(c.id), idle=nsw===0;
+    const prof=(f.profile&&f.profile[key])|| (hot?'surchargé':'normal');
+    if(hot||prof==='surchargé'){ ctx.fillStyle='rgba(192,57,43,.15)';
+      ctx.beginPath(); ctx.arc(px(c),py(c),R+11,0,7); ctx.fill(); }
+    if(idle){ ctx.setLineDash([4,3]); ctx.strokeStyle='#9aa7bd'; ctx.lineWidth=2.5; }
+    else { ctx.setLineDash([]); ctx.strokeStyle=(hot||prof==='surchargé')?'#C0392B':loadColor(v); ctx.lineWidth=hot?4:3.2; }
+    ctx.beginPath(); ctx.arc(px(c),py(c),R+4,0,7); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle=idle?'#f3f4f7':'#fff'; ctx.strokeStyle=idle?'#9aa7bd':loadColor(v); ctx.lineWidth=1.4;
+    ctx.beginPath(); ctx.arc(px(c),py(c),R,0,7); ctx.fill(); ctx.stroke();
+    const ic=IMG[c.tier], isz=LARGE?26:32; if(ic){ ctx.globalAlpha=idle?.35:1;
+      ctx.drawImage(ic,px(c)-isz/2,py(c)-isz/2,isz,isz); ctx.globalAlpha=1; }
+    ctx.textAlign='center';
+    ctx.fillStyle=NAVY; ctx.font='bold 12px "IBM Plex Sans",sans-serif';
+    ctx.fillText(`${c.label} · ${TIER_FR[c.tier]||c.tier}`, px(c), py(c)-R-26);
+    ctx.font='bold 12px "IBM Plex Mono",monospace';
+    ctx.fillStyle=idle?'#8a93a3':(hot?'#C0392B':NAVY);
+    ctx.fillText(`${rate.toFixed(1)} PI/s`, px(c), py(c)-R-11);
+    ctx.font='10px "IBM Plex Sans",sans-serif'; ctx.fillStyle='#5a6578';
+    ctx.fillText(idle?'0 sw · oisif':`${nsw} sw · ${prof}`, px(c), py(c)+R+14);
+  }
+}
+function fillTable(){
+  const f=frame(), tb=document.getElementById('tbody'); tb.innerHTML='';
+  for(const c of ctrls){
+    const key=String(c.id);
+    const rate=(f.rate&&f.rate[key])||0, fair=(f.fair&&f.fair[key])||0;
+    const nsw=(f.nsw&&f.nsw[key])||0, idle=nsw===0;
+    const prof=(f.profile&&f.profile[key])||'normal';
+    const tr=document.createElement('tr');
+    if(prof==='surchargé') tr.className='hot'; if(idle) tr.className='idle';
+    tr.innerHTML=`<td><b>${c.label}</b></td><td>${TIER_FR[c.tier]||c.tier}</td>
+      <td class="num">${c.cap.toFixed(0)}</td><td class="num">${rate.toFixed(1)}</td>
+      <td class="num">${fair.toFixed(1)}</td><td class="num">${nsw}</td>
+      <td>${profileBadge(idle?'oisif':prof)}</td>`;
+    tb.appendChild(tr);
+  }
+}
+function fillAlgo(){
+  const f=frame(), tb=document.getElementById('algo-body'); tb.innerHTML='';
+  document.getElementById('algo-sil').textContent = f.silhouette==null?'-':f.silhouette.toFixed(3);
+  document.getElementById('algo-k').textContent = f.k_clusters==null?'-':f.k_clusters;
+  for(const c of ctrls){
+    const key=String(c.id);
+    const rate=(f.rate&&f.rate[key])||0, fair=(f.fair&&f.fair[key])||0;
+    const prof=(f.profile&&f.profile[key])||'normal';
+    const cl=(f.cluster&&f.cluster[key]);
+    const tr=document.createElement('tr');
+    if(prof==='surchargé') tr.className='hot';
+    tr.innerHTML=`<td><b>${c.label}</b></td><td class="num">${cl==null?'-':cl}</td>
+      <td>${profileBadge(prof)}</td><td class="num">${rate.toFixed(1)}</td>
+      <td class="num">${fair.toFixed(1)}</td>`;
+    tb.appendChild(tr);
+  }
+  const mv=f.moves||{};
+  const lines=Object.keys(mv).map(s=>{
+    const to=byId[mv[s]]; const fromCtrl=f.assign[s]; // after move assign already updated in trace
+    return `s${s} → ${to?to.label:mv[s]}`;
+  });
+  document.getElementById('algo-moves').textContent = lines.length? lines.join(' · ') : 'aucune migration';
+}
+function hud(){
+  const f=frame(), stable=isStable(st.cyc), n=nMoves(st.cyc);
+  document.getElementById('cyc').textContent=(st.cyc+1)+' / '+NF;
+  document.getElementById('cyc-head').textContent='cycle '+(st.cyc+1);
+  document.getElementById('scrub').value=st.cyc;
+  document.getElementById('jain').textContent=(f.jain==null?'-':f.jain.toFixed(3));
+  document.getElementById('tot').textContent=(f.total_rate==null?'-':f.total_rate.toFixed(1));
+  const ph=document.getElementById('phase-pill');
+  ph.className='phase-pill '+(stable?'ok':'reb');
+  ph.textContent=stable?`Stabilisé · c${STABLE_FROM+1}+`:'Rééquilibrage algo';
+  document.getElementById('mv').innerHTML=n?`<span class="flash">${n} migration(s)</span>`:'';
+  [...tl.children].forEach((el,i)=>el.classList.toggle('cur', i===st.cyc));
+  if(openId==='modal-loads') fillTable();
+  if(openId==='modal-algo') fillAlgo();
+}
+let last=performance.now();
+function loop(now){
+  const dt=(now-last)/1000; last=now;
+  const dwell=isStable(st.cyc)?1.0:2.2;
+  if(st.playing){ st.acc+=dt; if(st.acc>dwell){ st.acc=0; st.cyc=(st.cyc+1)%NF; } spawn(); }
+  for(let i=st.parts.length-1;i>=0;i--){ st.parts[i].t+=st.parts[i].v; if(st.parts[i].t>=1) st.parts.splice(i,1); }
+  if(st.parts.length>800) st.parts.splice(0,st.parts.length-800);
+  draw(); hud(); requestAnimationFrame(loop);
+}
+bindCfg();
+window.addEventListener('resize', sizeCanvas);
+loadIcons().then(()=>requestAnimationFrame(loop));
+document.getElementById('play').onclick=e=>{ st.playing=!st.playing; e.target.textContent=st.playing?'Pause':'Lecture'; };
+document.getElementById('restart').onclick=()=>{ st.cyc=0; };
+document.getElementById('scrub').oninput=e=>{ st.cyc=+e.target.value; st.playing=false;
+  document.getElementById('play').textContent='Lecture'; };
+// Open algo modal once on load for demo/mémoire clarity (user can close).
+setTimeout(()=>openModal('modal-algo'), 400);
+</script>
+</body></html>

@@ -127,6 +127,8 @@ def _plot_boxplots(df: pd.DataFrame, out_dir: Path) -> list[Path]:
 def _write_report(df, agg, sig, out_path: Path) -> None:
     overall = (df.groupby("strategy")[REPORT_METRICS].mean().round(3)
                .sort_values("jain_fairness", ascending=False))
+    mlflow_db = config.PROJECT_ROOT / "mlflow.db"
+    mlflow_fig = config.FIGURES_DIR / "analysis" / "mlflow_ui.png"
     lines = [
         "# Analyse comparative — SDN_CTRLML-Edge",
         "",
@@ -135,7 +137,35 @@ def _write_report(df, agg, sig, out_path: Path) -> None:
         f"{df.seed.nunique()} seeds).",
         "- Intervalles de confiance à 95 % (loi de Student) sur les seeds ; "
         "tests de Wilcoxon appariés (proposé vs baselines).",
+        "- Suivi d'expériences : **MLflow** "
+        f"(`{mlflow_db.name}`, expérience `sdn_ctrlml_edge`) — "
+        "chaque run du DOE enregistre params + métriques.",
         "",
+        "## Suivi MLflow",
+        "",
+        "Le plan d'expériences (`make experiment`) journalise les ~1000 runs dans "
+        "MLflow (backend SQLite). L'UI permet de filtrer par stratégie / taux / seed "
+        "et de comparer les métriques (latence, débit, Jain, migrations).",
+        "",
+        "```bash",
+        "make mlflow-ui    # → http://127.0.0.1:5000",
+        "```",
+        "",
+    ]
+    if mlflow_fig.exists():
+        lines += [
+            f"![UI MLflow — suivi des expériences]({mlflow_fig.relative_to(config.REPORTS_DIR).as_posix()})",
+            "",
+            "*Figure : interface MLflow après le DOE (expérience `sdn_ctrlml_edge`).*",
+            "",
+        ]
+    else:
+        lines += [
+            f"*Capture UI : lancer `make mlflow-ui` puis enregistrer "
+            f"`reports/figures/analysis/mlflow_ui.png`.*",
+            "",
+        ]
+    lines += [
         "## Moyennes globales par stratégie",
         "",
         overall.to_markdown(),

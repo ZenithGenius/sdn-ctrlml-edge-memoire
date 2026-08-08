@@ -8,6 +8,8 @@ qui explose quand l'utilisation ρ approche 1 — reproduit la tendance d'Aly et
 from __future__ import annotations
 
 import argparse
+import logging
+import sys
 import math
 
 import numpy as np
@@ -19,6 +21,8 @@ from .modeling.baselines import make_strategy
 from .modeling.clustering import classify
 from .modeling.decision import Context
 
+
+log = logging.getLogger(__name__)
 
 def _jain(values: list[float]) -> float:
     """Indice d'équité de Jain (1 = parfaitement équilibré)."""
@@ -170,6 +174,34 @@ def run(
     }
 
 
+def metrics_frame(trace: list, infra) -> "pd.DataFrame":
+    """Met la trace à plat : une ligne par contrôleur et par époque.
+
+    Colonnes : les six métriques brutes, leurs valeurs lissées par EMA, et le
+    profil attribué par le clustering. C'est la matière première de la couche
+    d'analyse, celle qui reste invisible dans les métriques agrégées.
+    """
+    import pandas as pd
+
+    rows = []
+    for t in trace:
+        cl_over, cl_under = set(t["overloaded"]), set(t["underutilized"])
+        for c, raw in t["raw"].items():
+            lab = (t["labels"] or {}).get(c)
+            profil = ("surchargé" if lab in cl_over else
+                      "sous-utilisé" if lab in cl_under else
+                      "normal" if lab is not None else "")
+            row = {"epoch": t["epoch"], "controller": c,
+                   "tier": infra.tier.get(c, ""), "capacity": infra.capacity.get(c)}
+            row.update({m: raw[m] for m in config.METRICS})
+            row.update({f"ema_{m}": (t["ema"][c][m] if t["ema"] else None)
+                        for m in config.METRICS})
+            row.update({"cluster": lab, "profil": profil,
+                        "silhouette": t["silhouette"]})
+            rows.append(row)
+    return pd.DataFrame(rows)
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description="Simulateur SDN_CTRLML-Edge")
     p.add_argument("--strategy", default="edge", choices=config.STRATEGIES)
@@ -177,20 +209,33 @@ def main() -> None:
     p.add_argument("--n-flows", type=int, default=20000)
     p.add_argument("--topo", default=config.DEFAULT_TOPOLOGY)
     p.add_argument("--seed", type=int, default=config.RANDOM_SEED)
+    p.add_argument("--metrics-out", default=None,
+                   help="écrit en CSV les 6 métriques par contrôleur et par époque")
     args = p.parse_args()
+    logging.basicConfig(level=logging.INFO, format="%(message)s",
+                        stream=sys.stdout)
 
+    trace = [] if args.metrics_out else None
     m = run(
         strategy=args.strategy, arrival_rate=args.arrival_rate,
-        n_flows=args.n_flows, topo=args.topo, seed=args.seed,
+        n_flows=args.n_flows, topo=args.topo, seed=args.seed, trace=trace,
     )
-    print(f"Stratégie      : {m['strategy']}")
-    print(f"Taux d'arrivée : {m['arrival_rate']:.0f} flux/s")
-    print(f"Temps réponse  : {m['response_time_ms']:.2f} ms")
-    print(f"Débit servi    : {m['throughput_fps']:.0f} flux/s")
-    print(f"CPU moyen      : {m['cpu_util_mean']:.3f}")
-    print(f"Équité (Jain)  : {m['jain_fairness']:.3f}")
-    print(f"Migrations     : {m['migrations']}")
-    print(f"Silhouette     : {m['silhouette']:.3f}")
+    if args.metrics_out:
+        from pathlib import Path
+        infra = build_infrastructure(args.topo, config.N_CONTROLLERS, args.seed)
+        df = metrics_frame(trace, infra)
+        Path(args.metrics_out).parent.mkdir(parents=True, exist_ok=True)
+        df.to_csv(args.metrics_out, index=False)
+        log.info(f"Métriques écrites : {args.metrics_out} "
+              f"({len(df)} lignes, {df['epoch'].nunique()} époques)")
+    log.info(f"Stratégie      : {m['strategy']}")
+    log.info(f"Taux d'arrivée : {m['arrival_rate']:.0f} flux/s")
+    log.info(f"Temps réponse  : {m['response_time_ms']:.2f} ms")
+    log.info(f"Débit servi    : {m['throughput_fps']:.0f} flux/s")
+    log.info(f"CPU moyen      : {m['cpu_util_mean']:.3f}")
+    log.info(f"Équité (Jain)  : {m['jain_fairness']:.3f}")
+    log.info(f"Migrations     : {m['migrations']}")
+    log.info(f"Silhouette     : {m['silhouette']:.3f}")
 
 
 if __name__ == "__main__":

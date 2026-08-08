@@ -15,6 +15,8 @@ affichés sont ceux mesurés sur les commutateurs Open vSwitch.
 from __future__ import annotations
 
 import argparse
+import logging
+import sys
 import json
 from pathlib import Path
 
@@ -24,6 +26,8 @@ TIER = {6000.0: ("cloud", "Cloud"), 3500.0: ("fog", "Fog"), 1800.0: ("edge", "Ed
 # Palette du mémoire (cohérente avec les figures du chapitre III).
 NAVY = "#1F4E79"
 PALETTE = ["#5B8FF9", "#61DDAA", "#F6BD16", "#7262FD", "#78D3F8", "#F08BB4"]
+
+log = logging.getLogger(__name__)
 
 
 def load_trace(path: str) -> dict:
@@ -217,14 +221,16 @@ def main() -> None:
     p.add_argument("--static", default=None,
                    help="produit aussi une image PNG pour le mémoire")
     args = p.parse_args()
+    logging.basicConfig(level=logging.INFO, format="%(message)s",
+                        stream=sys.stdout)
 
     trace = load_trace(args.trace)
     g = build_graph(trace, args.cycle)
-    print(f"Graphe : {g.number_of_nodes()} nœuds, {g.number_of_edges()} liens "
+    log.info(f"Graphe : {g.number_of_nodes()} nœuds, {g.number_of_edges()} liens "
           f"(cycle {g.graph['cycle']}, équité {g.graph['jain']})")
-    print("Écrit :", render_interactive(g, args.out))
+    log.info("Écrit :", render_interactive(g, args.out))
     if args.static:
-        print("Écrit :", render_static(g, args.static))
+        log.info("Écrit :", render_static(g, args.static))
 
 
 if __name__ == "__main__":

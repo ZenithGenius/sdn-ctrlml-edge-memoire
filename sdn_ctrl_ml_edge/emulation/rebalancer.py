@@ -11,6 +11,8 @@ l'exécution (dans le conteneur Containernet, en root).
 """
 from __future__ import annotations
 
+import logging
+
 import numpy as np
 
 from .. import config
@@ -19,6 +21,8 @@ from ..modeling.clustering import classify
 # Métriques d'émulation mappées sur les noms attendus par le clustering du mémoire.
 # "cpu" = charge relative : 1.0 = le contrôleur porte exactement sa part équitable.
 EMU_METRICS = ["cpu", "packetin", "nflows"]
+
+log = logging.getLogger(__name__)
 
 # Un contrôleur est « surchargé » s'il porte au moins 1,5 fois sa part équitable.
 # (Le simulateur, lui, raisonne en charge CPU absolue avec config.OVERLOAD_CPU.)
@@ -80,26 +84,42 @@ def plan_reassignments(loads, assignment, switch_load, capacity, seed=config.RAN
     - `loads` : charges LISSÉES (EMA) ; servent à décider des délestages.
     - `loads_raw` : charges brutes ; servent à repérer une capacité inutilisée.
 
-    Le traitement est volontairement asymétrique. Délester coûte des migrations : on
-    s'appuie sur la mesure lissée pour ne pas réagir à un pic passager. À l'inverse,
-    un contrôleur laissé oisif gaspille sa capacité en continu : on le détecte sur la
-    mesure brute, car l'EMA garde longtemps la trace d'une charge passée et
-    retarderait d'autant la récupération.
-    Renvoie {switch: nouveau_contrôleur} pour les seuls switches à déplacer.
+    Renvoie `(moves, decision)` :
+      - `moves` : {switch: nouveau_contrôleur}
+      - `decision` : sortie du clustering (labels, profils, silhouette) pour la trace / visu.
     """
+    import math
+
     controllers, vecs = controller_vectors(loads, capacity)
     result = classify(vecs, config.N_CLUSTERS, EMU_METRICS, seed,
                       overload_cpu=EMU_OVERLOAD_RATIO)
 
     overloaded = {controllers[i] for i in range(len(controllers))
                   if result.labels[i] in result.overloaded}
+    under = {controllers[i] for i in range(len(controllers))
+             if result.labels[i] in result.underutilized}
+
+    cluster = {controllers[i]: int(result.labels[i]) for i in range(len(controllers))}
+    profile = {}
+    for c in controllers:
+        if c in overloaded:
+            profile[c] = "surchargé"
+        elif c in under:
+            profile[c] = "sous-utilisé"
+        else:
+            profile[c] = "normal"
+    sil = result.silhouette
+    decision = {
+        "cluster": {str(c): cluster[c] for c in controllers},
+        "profile": {str(c): profile[c] for c in controllers},
+        "silhouette": None if (sil != sil or math.isnan(sil)) else round(float(sil), 4),
+        "k": int(result.k),
+    }
 
     live = {c: loads[c]["packetin_rate_total"] for c in controllers}
     healthy = [c for c in controllers if c not in overloaded]
     if not healthy:                                        # tout est surchargé : ne rien casser
-        return {}
-    # Pas de sortie anticipée quand rien n'est surchargé : un contrôleur laissé
-    # OISIF est lui aussi un déséquilibre (capacité perdue), traité en phase 2.
+        return {}, decision
 
     # Part équitable de chaque contrôleur (au prorata de sa capacité) : sert de cible.
     total = sum(live.values())
@@ -109,8 +129,6 @@ def plan_reassignments(loads, assignment, switch_load, capacity, seed=config.RAN
     moves = {}
     # --- Phase 1 : délester les contrôleurs SURCHARGÉS ---------------------
     for c in sorted(overloaded):
-        # Délester JUSQU'À revenir à sa part, pas plus : évacuer complètement le
-        # contrôleur créerait un déséquilibre inverse et ferait osciller le système.
         remaining = live[c]
         own = sorted((s for s, host in assignment.items() if host == c),
                      key=lambda s: switch_load.get(s, 0.0), reverse=True)
@@ -118,24 +136,17 @@ def plan_reassignments(loads, assignment, switch_load, capacity, seed=config.RAN
             if remaining <= fair[c]:
                 break
             load_s = switch_load.get(s, 0.0)
-            # Cible : le contrôleur sain le plus loin de SA part (capacité prise en compte),
-            # à condition qu'il puisse absorber ce switch sans devenir surchargé à son tour.
-            # Un switch est indivisible : si aucune cible ne convient, l'équilibre parfait
-            # est hors d'atteinte et insister ne ferait qu'osciller indéfiniment.
             ok = [h for h in healthy if live[h] + load_s <= 1.2 * fair[h]]
             if not ok:
                 break
             target = min(ok, key=lambda h: live[h] / max(1e-9, fair[h]))
             moves[s] = target
-            live[target] += load_s                          # anticipe la charge transférée
+            live[target] += load_s
             remaining -= load_s
         live[c] = remaining
 
     # --- Phase 2 : REMPLIR les contrôleurs sous-utilisés --------------------
-    # Sans cette phase, un contrôleur vidé le reste indéfiniment : rien ne ramène de
-    # charge vers lui, et sa capacité est perdue. C'est le profil « sous-utilisé »
-    # du mémoire, symétrique du profil « surchargé ».
-    if loads_raw:                       # capacité oisive : jugée sur la mesure brute
+    if loads_raw:
         for c in controllers:
             live[c] = loads_raw[c]["packetin_rate_total"] - (
                 sum(switch_load.get(s, 0.0) for s, t in moves.items() if t != c and
@@ -146,9 +157,8 @@ def plan_reassignments(loads, assignment, switch_load, capacity, seed=config.RAN
         fair = {c: total * (max(1.0, capacity[c]) / cap_total) for c in controllers}
 
     for c in sorted(controllers, key=lambda h: live[h] / max(1e-9, fair[h])):
-        if live[c] >= 0.5 * fair[c]:                        # assez chargé : rien à faire
+        if live[c] >= 0.5 * fair[c]:
             continue
-        # Donneur : le contrôleur le plus au-dessus de sa part, hors surchargés déjà traités.
         for _ in range(len(controllers)):
             donor = max(controllers, key=lambda h: live[h] / max(1e-9, fair[h]))
             if donor == c or live[donor] <= 1.2 * fair[donor]:
@@ -158,18 +168,18 @@ def plan_reassignments(loads, assignment, switch_load, capacity, seed=config.RAN
             cand += [s for s, tgt in moves.items() if tgt == donor]
             if not cand:
                 break
-            s = min(cand, key=lambda x: switch_load.get(x, 0.0))   # le plus léger d'abord
+            s = min(cand, key=lambda x: switch_load.get(x, 0.0))
             load_s = switch_load.get(s, 0.0)
-            if live[c] + load_s > fair[c] * 1.2:             # ne pas créer une nouvelle surcharge
+            if live[c] + load_s > fair[c] * 1.2:
                 break
-            if live[donor] - load_s < 0.8 * fair[donor]:     # ne pas vider le donneur
+            if live[donor] - load_s < 0.8 * fair[donor]:
                 break
             moves[s] = c
             live[c] += load_s
             live[donor] -= load_s
             if live[c] >= 0.8 * fair[c]:
                 break
-    return moves
+    return moves, decision
 
 
 # --------------------------------------------------------------------------- runtime (root)
@@ -247,13 +257,13 @@ def main():  # pragma: no cover - boucle temps réel, exécutée dans le contene
         try:
             loads, sw_ctrl, sw_load, state = poll_loads(rest, capacity, state)
         except Exception as e:
-            print(f"[{rnd}] lecture impossible: {e}"); time.sleep(args.interval); continue
-        moves = plan_reassignments(loads, sw_ctrl, sw_load, capacity)
+            log.info(f"[{rnd}] lecture impossible: {e}"); time.sleep(args.interval); continue
+        moves, _decision = plan_reassignments(loads, sw_ctrl, sw_load, capacity)
         if moves:
             apply_moves(moves, ep)
-            print(f"[{rnd}] rééquilibrage: {moves}")
+            log.info(f"[{rnd}] rééquilibrage: {moves}")
         else:
-            print(f"[{rnd}] équilibré, aucune migration")
+            log.info(f"[{rnd}] équilibré, aucune migration")
         time.sleep(args.interval)
 
 
