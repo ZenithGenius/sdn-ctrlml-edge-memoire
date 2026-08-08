@@ -16,3 +16,10 @@ mlruns/
 reports/*.csv
 reports/analysis_report.md
 mlflow.db
+
+# personal LinkedIn drafts (keep local)
+linkedin-content-bank.md
+linkedin-posts/
+
+# Oeuvres de tiers : ne pas rediffuser (copyright)
+docs/reference/
