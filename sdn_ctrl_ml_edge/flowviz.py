@@ -31,109 +31,6 @@ def _profile(t, c):
     return "normal"
 
 
-def build_payload_from_emulation(trace_path: str) -> dict:
-    """Rejeu fidèle d'une trace d'émulation (pas une simulation).
-
-    Source : `run_poc.py --trace-out`. L'équilibrage visible (migrations) est celui
-    de SDN_CTRLML-Edge — pas un plafond CPU matériel. Les « capacités » Cloud/Fog/Edge
-    sont des poids relatifs pour la part équitable.
-    """
-    import json
-    from pathlib import Path
-
-    tr = json.loads(Path(trace_path).read_text(encoding="utf-8"))
-    meta, cyc = tr["meta"], tr["cycles"]
-    caps = {int(k): v for k, v in meta["capacity"].items()}
-    ctrls = sorted(caps)
-    tier_of = {6000.0: "cloud", 3500.0: "fog", 1800.0: "edge"}
-    tiers = {int(k): v for k, v in meta.get("tiers", {}).items()} \
-        if meta.get("tiers") else {c: tier_of.get(caps[c], "edge") for c in ctrls}
-
-    n_sw = meta["switches"]
-    hps = int(meta.get("hosts_per_switch", 0) or 0)
-    n_hosts = int(meta.get("n_hosts", n_sw * hps))
-    large = n_sw >= 12
-
-    # Trois bandes : contrôleurs / commutateurs / hôtes (topo Mininet réelle).
-    nodes = []
-    for i, c in enumerate(ctrls):
-        x = (i + 0.5) / len(ctrls)
-        nodes.append({"id": 1000 + c, "x": round(x, 4), "y": 0.88, "ctrl": True,
-                      "kind": "ctrl", "tier": tiers[c], "cap": caps[c],
-                      "home": None, "label": f"c{c}"})
-    for s in range(1, n_sw + 1):
-        x = (s - 0.5) / n_sw
-        nodes.append({"id": s, "x": round(x, 4), "y": 0.48, "ctrl": False,
-                      "kind": "sw", "tier": "edge", "cap": 0,
-                      "home": None, "label": f"s{s}"})
-    # Hôtes : hps sous chaque switch (ids 2000+).
-    hid = 1
-    host_edges = []
-    for s in range(1, n_sw + 1):
-        for k in range(hps):
-            # Légère dispersion sous le switch parent.
-            x = (s - 0.5) / n_sw + (k - (hps - 1) / 2) * (0.7 / max(n_sw, 1))
-            nodes.append({"id": 2000 + hid, "x": round(x, 4), "y": 0.12, "ctrl": False,
-                          "kind": "host", "tier": "host", "cap": 0,
-                          "home": s, "label": f"h{hid}"})
-            host_edges.append([2000 + hid, s])
-            hid += 1
-            if hid > n_hosts:
-                break
-        if hid > n_hosts:
-            break
-
-    edges = [[s, s + 1] for s in range(1, n_sw)] + host_edges
-
-    frames = []
-    for k in cyc:
-        load = {int(a): b for a, b in k["load"].items()}
-        assign = {int(a): b for a, b in k["assign"].items()}
-        total = sum(load.values()) or 1.0
-        cap_tot = sum(caps.values()) or 1.0
-        mx = max(load.values()) or 1.0
-        nsw = {c: 0 for c in ctrls}
-        for ctrl in assign.values():
-            nsw[ctrl] = nsw.get(ctrl, 0) + 1
-        # Profils du clustering si présents ; sinon proxy 1,5× part (anciennes traces).
-        profile_raw = {int(a): b for a, b in k.get("profile", {}).items()}
-        cluster_raw = {int(a): int(b) for a, b in k.get("cluster", {}).items()}
-        if profile_raw:
-            hot = [1000 + c for c, p in profile_raw.items() if p == "surchargé"]
-        else:
-            hot = [1000 + c for c in ctrls
-                   if load.get(c, 0) > 1.5 * total * caps[c] / cap_tot]
-        frames.append({
-            "load": {str(1000 + c): round(load.get(c, 0) / mx, 4) for c in ctrls},
-            "rate": {str(1000 + c): round(load.get(c, 0), 1) for c in ctrls},
-            "fair": {str(1000 + c): round(total * caps[c] / cap_tot, 1) for c in ctrls},
-            "nsw": {str(1000 + c): nsw[c] for c in ctrls},
-            "share": {str(1000 + c): round(load.get(c, 0) / total, 4) for c in ctrls},
-            "hot": hot,
-            "profile": {str(1000 + c): profile_raw.get(c, "normal") for c in ctrls},
-            "cluster": {str(1000 + c): cluster_raw.get(c, 0) for c in ctrls},
-            "silhouette": k.get("silhouette"),
-            "k_clusters": k.get("k"),
-            "assign": {str(s): 1000 + c for s, c in assign.items()},
-            "moves": {str(s): 1000 + int(c) for s, c in k["moves"].items()},
-            "jain": k.get("jain_w"),
-            "total_rate": round(total, 1),
-            "round": k["round"],
-        })
-
-    return {
-        "meta": {"rate": 0, "n_flows": 0, "n_ctrl": len(ctrls), "seed": 0,
-                 "emulation": True, "traffic": meta.get("traffic", "constant"),
-                 "rebalance": meta.get("rebalance", True), "switches": n_sw,
-                 "hosts": n_hosts, "hosts_per_switch": hps, "large": large,
-                 "balancer": meta.get(
-                     "balancer",
-                     "SDN_CTRLML-Edge (K-means++ multi-métriques + délestage/remplissage)")},
-        "nodes": nodes, "edges": edges,
-        "cycles": {"edge": frames, "onos": frames},
-    }
-
-
 def build_payload(rate: float, n_flows: int, n_ctrl: int, seed: int) -> dict:
     infra = build_infrastructure(config.DEFAULT_TOPOLOGY, n_ctrl, seed)
     pos = {n: infra.graph.nodes[n]["pos"] for n in infra.graph.nodes()}
@@ -408,12 +305,6 @@ document.getElementById('speed').oninput=e=>{ state.speed=+e.target.value; };
 
 
 
-def _emu_template() -> str:
-    """Gabarit UI (sidebar + modales) — fichier voisin pour rester éditable."""
-    from pathlib import Path
-    return Path(__file__).with_name("emu_viz.html").read_text(encoding="utf-8")
-
-
 
 def main() -> None:
     p = argparse.ArgumentParser(description="Visualisation du flux SDN_CTRLML-Edge")
@@ -428,12 +319,14 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(message)s",
                         stream=sys.stdout)
 
-    if args.from_emu:                      # rejoue une émulation réelle
-        payload = build_payload_from_emulation(args.from_emu)
-        template = _emu_template()
-    else:                                  # compare les stratégies en simulation
-        payload = build_payload(args.rate, args.n_flows, args.n_ctrl, args.seed)
-        template = HTML
+    if args.from_emu:
+        # Le rendu d'une trace d'émulation est confié à topoviz (networkx + pyvis),
+        # bibliothèques éprouvées, plutôt qu'à un moteur de dessin maison.
+        raise SystemExit(
+            "Pour une trace d'émulation, utilisez :\n"
+            "  python -m sdn_ctrl_ml_edge.topoviz --from <trace.json>")
+    payload = build_payload(args.rate, args.n_flows, args.n_ctrl, args.seed)
+    template = HTML
     html = template.replace("__PAYLOAD__", json.dumps(payload, separators=(",", ":")))
     from pathlib import Path
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)

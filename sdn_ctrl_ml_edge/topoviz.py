@@ -18,6 +18,7 @@ import argparse
 import logging
 import sys
 import json
+import re
 from pathlib import Path
 
 import networkx as nx
@@ -139,6 +140,14 @@ def render_interactive(g: nx.Graph, out: str) -> str:
     }""")
     Path(out).parent.mkdir(parents=True, exist_ok=True)
     net.save_graph(out)
+
+    # pyvis embarque vis.js mais laisse un appel CDN à Bootstrap, qui sert
+    # uniquement à l'habillage. On le retire pour que la page reste utilisable
+    # hors ligne, condition nécessaire le jour d'une soutenance.
+    html = Path(out).read_text(encoding="utf-8")
+    html = re.sub(r'\s*<(script|link)[^>]*(?:src|href)="https?://[^"]*"[^>]*>'
+                  r'(?:</script>)?', "", html)
+    Path(out).write_text(html, encoding="utf-8")
     return out
 
 
@@ -228,9 +237,9 @@ def main() -> None:
     g = build_graph(trace, args.cycle)
     log.info(f"Graphe : {g.number_of_nodes()} nœuds, {g.number_of_edges()} liens "
           f"(cycle {g.graph['cycle']}, équité {g.graph['jain']})")
-    log.info("Écrit :", render_interactive(g, args.out))
+    log.info("Écrit : %s", render_interactive(g, args.out))
     if args.static:
-        log.info("Écrit :", render_static(g, args.static))
+        log.info("Écrit : %s", render_static(g, args.static))
 
 
 if __name__ == "__main__":
