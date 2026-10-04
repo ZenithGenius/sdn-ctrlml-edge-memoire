@@ -15,7 +15,16 @@ models/*
 mlruns/
 reports/*.csv
 reports/analysis_report.md
+reports/*.pdf
+reports/*.docx
+reports/emulation/*.json
+reports/flux_emulation.html
 mlflow.db
+
+# local IDE / captures
+.serena/
+emu-viz.png
+shot.jpeg
 
 # personal LinkedIn drafts (keep local)
 linkedin-content-bank.md
