@@ -14,12 +14,12 @@ def test_overloaded_controller_is_relieved():
     loads = _loads({0: 100.0, 1: 120.0, 2: 1700.0}, {0: 5, 1: 6, 2: 40})
     assignment = {10: 2, 11: 2, 12: 0, 13: 1}          # switches 10,11 sur le contrôleur saturé
     switch_load = {10: 900.0, 11: 800.0, 12: 100.0, 13: 120.0}
-    moves = plan_reassignments(loads, assignment, switch_load, CAP)
+    moves, decision = plan_reassignments(loads, assignment, switch_load, CAP)
     assert moves, "le contrôleur saturé aurait dû être délesté"
-    # Les switches déplacés viennent bien du contrôleur surchargé (2)...
     assert set(moves) <= {10, 11}
-    # ...et partent vers un contrôleur sain (0 ou 1), jamais vers le saturé.
     assert all(dst in (0, 1) for dst in moves.values())
+    assert decision["profile"]["2"] == "surchargé"
+    assert "cluster" in decision and "k" in decision
 
 
 def test_balanced_network_no_migration():
@@ -28,7 +28,9 @@ def test_balanced_network_no_migration():
     loads = _loads({0: 600.0, 1: 350.0, 2: 180.0}, {0: 10, 1: 9, 2: 11})
     assignment = {10: 0, 11: 1, 12: 2}
     switch_load = {10: 600.0, 11: 350.0, 12: 180.0}
-    assert plan_reassignments(loads, assignment, switch_load, CAP) == {}
+    moves, decision = plan_reassignments(loads, assignment, switch_load, CAP)
+    assert moves == {}
+    assert set(decision["profile"].values()) <= {"normal", "sous-utilisé", "surchargé"}
 
 
 def test_small_controller_overloaded_despite_lower_raw_rate():
@@ -37,7 +39,7 @@ def test_small_controller_overloaded_despite_lower_raw_rate():
     loads = _loads({0: 300.0, 1: 280.0, 2: 900.0}, {0: 10, 1: 9, 2: 30})
     assignment = {10: 0, 11: 1, 12: 2, 13: 2}
     switch_load = {10: 300.0, 11: 280.0, 12: 500.0, 13: 400.0}
-    moves = plan_reassignments(loads, assignment, switch_load, CAP)
+    moves, _ = plan_reassignments(loads, assignment, switch_load, CAP)
     assert moves, "le contrôleur Edge surchargé aurait dû être délesté"
     assert set(moves) <= {12, 13}
     assert all(dst in (0, 1) for dst in moves.values())
@@ -49,10 +51,9 @@ def test_does_not_evacuate_overloaded_controller():
     loads = _loads({0: 90.0, 1: 0.0, 2: 0.0}, {0: 30, 1: 0, 2: 0})
     assignment = {s: 0 for s in range(1, 7)}
     switch_load = {1: 15.0, 2: 15.0, 3: 15.0, 4: 15.0, 5: 15.0, 6: 15.0}
-    moves = plan_reassignments(loads, assignment, switch_load, CAP)
+    moves, _ = plan_reassignments(loads, assignment, switch_load, CAP)
     assert moves, "c0 est surchargé, il doit être délesté"
     assert len(moves) < 6, "c0 ne doit pas être entièrement évacué"
-    # La charge restante sur c0 doit rester la plus grosse (c'est le plus gros Cloud).
     remaining = 90.0 - sum(switch_load[s] for s in moves)
     assert remaining > 0
 
@@ -63,7 +64,7 @@ def test_idle_controller_is_refilled():
     loads = _loads({0: 0.0, 1: 200.0, 2: 200.0}, {0: 0, 1: 20, 2: 20})
     assignment = {10: 1, 11: 1, 12: 2, 13: 2}
     switch_load = {10: 100.0, 11: 100.0, 12: 100.0, 13: 100.0}
-    moves = plan_reassignments(loads, assignment, switch_load, CAP)
+    moves, _ = plan_reassignments(loads, assignment, switch_load, CAP)
     assert any(dst == 0 for dst in moves.values()), \
         "le contrôleur oisif doit être réalimenté (profil « sous-utilisé »)"
 
